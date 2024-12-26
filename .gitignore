@@ -1,0 +1,25 @@
+# Environment variables
+.env
+
+# Binary files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go specific
+*.test
+*.out
+/vendor/
+/bin/
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
