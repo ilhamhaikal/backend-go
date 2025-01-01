@@ -2,7 +2,10 @@ package controllers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"regexp"
+	"time"
 	"tournyaka-backend/config"
 	"tournyaka-backend/utils"
 
@@ -13,10 +16,16 @@ type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
+
 type RegisterRequest struct {
-	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Username string `json:"username"`
+}
+
+func isValidEmail(email string) bool {
+	re := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return re.MatchString(email)
 }
 
 func Register(w http.ResponseWriter, r *http.Request) {
@@ -26,116 +35,116 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validasi input
+	if !isValidEmail(req.Email) {
+		http.Error(w, "Invalid email format", http.StatusBadRequest)
+		return
+	}
+	if len(req.Password) < 6 {
+		http.Error(w, "Password must be at least 6 characters", http.StatusBadRequest)
+		return
+	}
+	if len(req.Username) == 0 {
+		http.Error(w, "Username is required", http.StatusBadRequest)
+		return
+	}
+
+	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "Error processing password", http.StatusInternalServerError)
+		log.Println("Error hashing password:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	var userID int64
-	err = config.DB.QueryRow(`
-        INSERT INTO users (username, email, password) 
-        VALUES ($1, $2, $3)
-        RETURNING id`,
-		req.Username, req.Email, string(hashedPassword)).Scan(&userID)
-
+	// Insert user ke database
+	var userID int
+	err = config.DB.QueryRow(
+		`INSERT INTO users (username, email, password_hash, created_at, updated_at) 
+		VALUES ($1, $2, $3, $4, $5) RETURNING user_id`,
+		req.Username, req.Email, string(hashedPassword), time.Now(), time.Now(),
+	).Scan(&userID)
 	if err != nil {
-		http.Error(w, "User already exists", http.StatusConflict)
+		log.Println("Error creating user:", err)
+		http.Error(w, "Failed to register user", http.StatusInternalServerError)
 		return
 	}
 
+	// Berikan respons sukses
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "User registered successfully",
+		"status":  "success",
+		"message": "Registration successful",
 		"user_id": userID,
 	})
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
-	var credentials struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&credentials); err != nil {
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Query untuk mendapatkan data dari kedua tabel
-	query := `
-        SELECT u.id, u.password, mu.nama, mr.role_name 
-        FROM users u 
-        LEFT JOIN m_users mu ON u.id = mu.user_id 
-        LEFT JOIN m_role mr ON mu.role_id = mr.id 
-        WHERE u.email = $1
-    `
+	// Validasi input
+	if !isValidEmail(req.Email) {
+		http.Error(w, "Invalid email format", http.StatusBadRequest)
+		return
+	}
 
+	// Get user from database
 	var user struct {
-		ID       uint
-		Password string
-		Nama     string
-		Role     string
+		UserID       int
+		PasswordHash string
+		Username     string
+		Role         int
 	}
+	err := config.DB.QueryRow(
+		`SELECT user_id, password_hash, username, COALESCE(role, 3) as role 
+         FROM users 
+         WHERE email = $1`,
+		req.Email,
+	).Scan(&user.UserID, &user.PasswordHash, &user.Username, &user.Role)
 
-	err := config.DB.QueryRow(query, credentials.Email).Scan(&user.ID, &user.Password, &user.Nama, &user.Role)
 	if err != nil {
+		log.Println("Error finding user:", err)
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	// Verifikasi password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(credentials.Password)); err != nil {
+	// Validasi password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	// Generate JWT
-	token, err := utils.GenerateJWT(user.ID)
+	// Generate token
+	token, err := utils.GenerateJWT(uint(user.UserID))
 	if err != nil {
-		http.Error(w, "Error generating token", http.StatusInternalServerError)
+		log.Println("Error generating JWT:", err)
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 
+	// Return response with role
+	redirectPath := "/dashboard" // Default all roles to dashboard
+	if user.Role == 3 {          // Only regular users (role 3) go to homepage
+		redirectPath = "/"
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "success",
 		"token":  token,
 		"user": map[string]interface{}{
-			"id":   user.ID,
-			"nama": user.Nama,
-			"role": user.Role,
+			"id":       user.UserID,
+			"username": user.Username,
+			"role":     user.Role,
+			"redirect": redirectPath,
 		},
-	})
-}
-
-// GetUserProfile - handler untuk mendapatkan profil pengguna
-func GetUserProfile(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"message": "Profile retrieved successfully",
-		// TODO: Tambahkan data profil user
-	})
-}
-
-// UpdateUser - handler untuk memperbarui data pengguna
-func UpdateUser(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"message": "User updated successfully",
-		// TODO: Tambahkan logika update user
-	})
-}
-
-// RefreshToken - handler untuk memperbarui token
-func RefreshToken(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"message": "Token refreshed successfully",
-		// TODO: Tambahkan logika refresh token
 	})
 }

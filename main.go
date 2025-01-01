@@ -10,29 +10,35 @@ import (
 
 	"github.com/gorilla/handlers"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: .env file not found")
 	}
 
-	config.ConnectDatabase()
+	if err := config.ConnectDatabase(); err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 	defer config.CloseDatabase()
 
 	router := routes.RegisterRoutes()
 
-	// Add CORS middleware
-	headers := handlers.AllowedHeaders([]string{"Content-Type", "Authorization"})
-	methods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE"})
-	origins := handlers.AllowedOrigins([]string{"*"})
+	handler := handlers.CORS(
+		handlers.AllowedHeaders([]string{"Content-Type", "Authorization"}),
+		handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
+		handlers.AllowedOrigins([]string{"*"}),
+	)(handlers.LoggingHandler(os.Stdout, router))
 
-	// Add logging
-	loggedRouter := handlers.LoggingHandler(os.Stdout, router)
+	port := getEnvOrDefault("PORT", "8080")
+	fmt.Printf("Server running on http://localhost:%s\n", port)
+	log.Fatal(http.ListenAndServe(":"+port, handler))
+}
 
-	// Start server with middleware
-	fmt.Println("Server running at http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080",
-		handlers.CORS(headers, methods, origins)(loggedRouter)))
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

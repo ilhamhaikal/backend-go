@@ -39,10 +39,9 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-func ConnectDatabase() {
+func ConnectDatabase() error {
 	config := getDBConfig()
 
-	// Use proper string escaping for connection parameters
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s password='%s' dbname=%s sslmode=%s",
 		config.Host, config.Port, config.User, config.Password, config.DBName, config.SSLMode,
@@ -51,21 +50,20 @@ func ConnectDatabase() {
 	var err error
 	DB, err = sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatalf("Failed to open database connection: %v", err)
+		return fmt.Errorf("Failed to open database connection: %v", err)
 	}
 
-	// Test connection immediately
 	err = DB.Ping()
 	if err != nil {
-		log.Fatalf("Database connection failed: %v", err)
+		return fmt.Errorf("Database connection failed: %v", err)
 	}
 
-	// Configure connection pool
 	DB.SetMaxOpenConns(25)
 	DB.SetMaxIdleConns(5)
 	DB.SetConnMaxLifetime(5 * time.Minute)
 
 	log.Println("Successfully connected to database")
+	return nil
 }
 
 func CloseDatabase() {
