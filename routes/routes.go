@@ -31,8 +31,10 @@ func RegisterRoutes() *mux.Router {
 
 	api := router.PathPrefix("/api/v1").Subrouter()
 
-	api.HandleFunc("/login", controllers.Login).Methods("POST")
-	api.HandleFunc("/register", controllers.Register).Methods("POST")
+	// Public routes - add CheckNotAuthenticated middleware
+	api.HandleFunc("/login", middleware.CheckNotAuthenticated(controllers.Login)).Methods("POST")
+	api.HandleFunc("/register", middleware.CheckNotAuthenticated(controllers.Register)).Methods("POST")
+	api.HandleFunc("/logout", controllers.Logout).Methods("POST")
 
 	protected := api.PathPrefix("/user").Subrouter()
 	protected.Use(middleware.AuthMiddleware)

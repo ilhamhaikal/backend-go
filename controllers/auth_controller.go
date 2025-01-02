@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 	"tournyaka-backend/config"
 	"tournyaka-backend/utils"
@@ -122,7 +123,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	token, err := utils.GenerateJWT(uint(user.UserID))
 	if err != nil {
 		log.Println("Error generating JWT:", err)
-		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		http.Error(w, "User already logged in", http.StatusForbidden)
 		return
 	}
 
@@ -141,10 +142,38 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		"status": "success",
 		"token":  token,
 		"user": map[string]interface{}{
-			"id":       user.UserID,
-			"username": user.Username,
-			"role":     user.Role,
-			"redirect": redirectPath,
+			"id":              user.UserID,
+			"username":        user.Username,
+			"role":            user.Role,
+			"redirect":        redirectPath,
+			"isAuthenticated": true,
 		},
+	})
+}
+
+// Logout handler
+func Logout(w http.ResponseWriter, r *http.Request) {
+	tokenString := r.Header.Get("Authorization")
+	if tokenString == "" {
+		log.Println("No Authorization header provided")
+		http.Error(w, "No token provided", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("Authorization header: %s", tokenString)
+	tokenString = strings.Replace(tokenString, "Bearer ", "", 1)
+
+	err := utils.InvalidateToken(tokenString)
+	if err != nil {
+		log.Printf("Error invalidating token: %v", err)
+		http.Error(w, "Error logging out", http.StatusInternalServerError)
+		return
+	}
+
+	log.Println("Logout successful")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Successfully logged out",
 	})
 }
